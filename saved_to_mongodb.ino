@@ -109,7 +109,6 @@ void setup() {
   Serial.println(modem.localIP());
 
   // ─── Server Reachability Check ─────────
-  // Uses a plain TCP connect — confirms the server IP is routable.
   Serial.println("\n--- Checking Railway Server ---");
   TinyGsmClient testClient(modem);
   if (testClient.connect(SERVER, PORT)) {
@@ -153,9 +152,6 @@ void sendData(float dist, bool full) {
   }
 
   // ─── Build JSON Payload ────────────────
-  // Fields match exactly what POST /data expects on the Railway server.
-  // The server validates each field and writes to Supabase bin_locations.
-  // fill_level (0-100%) is computed server-side from distance.
   String payload = "{";
   payload += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
   payload += "\"lat\":"         + String(FIXED_LAT, 6) + ",";
@@ -169,15 +165,10 @@ void sendData(float dist, bool full) {
   Serial.println("Sending to Railway...");
 
   // ─── Fresh Client Every Send ───────────
-  // Re-creating the client each cycle avoids stale-socket status -3 errors.
-  // Plain TinyGsmClient = HTTP (no TLS). Railway edge accepts plain HTTP
-  // on port 80 and routes it to the Node.js container internally.
   TinyGsmClient freshClient(modem);
   HttpClient    http(freshClient, SERVER, PORT);
-  http.setTimeout(15000);  // 15 s — GSM latency is high
+  http.setTimeout(15000);
 
-  // ArduinoHttpClient automatically adds the correct Host: header,
-  // which is required for Railway's SNI-based routing on shared IPs.
   int err = http.post(ENDPOINT, "application/json", payload);
 
   if (err != 0) {
