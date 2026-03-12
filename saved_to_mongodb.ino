@@ -245,9 +245,6 @@ void loop() {
   // ─── Send to Railway → Supabase ────────
   sendData(dist, full);
 
-  // 60-second interval — server rate limit is 20 req/min per IP.
-  // With multiple bins sharing one GSM NAT IP, 60 s keeps them well
-  // within the 20 req/min budget (1 req/min per bin).
   Serial.println("reading in 60 seconds...");
   Serial.println("─────────────────────────────────\n");
   delay(60000);
