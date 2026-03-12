@@ -1,16 +1,30 @@
 const express = require('express');
-const router = express.Router();
-const { updateLocation, requireApiKey, healthCheck } = require('../controllers/location.controller');
+const router  = express.Router();
+const {
+  updateLocation,
+  ingestData,
+  requireApiKey,
+  healthCheck,
+} = require('../controllers/location.controller');
 
 /**
- * POST /update-location
- * Requires x-api-key header. Validates payload and stores GPS data in Supabase.
+ * POST /data
+ * Primary IoT ingestion endpoint — matches saved_to_mongodb.ino exactly.
+ * Payload: { device_id, lat, lng, distance, bin_full, device_ts }
+ * No API key required (Arduino sends no auth header).
+ */
+router.post('/data', ingestData);
+
+/**
+ * POST /update-location  (legacy)
+ * Kept for backward compatibility.
+ * Requires x-api-key header.
  */
 router.post('/update-location', requireApiKey, updateLocation);
 
 /**
  * GET /health
- * Public health check endpoint — no auth required.
+ * Public health check — no auth required.
  */
 router.get('/health', healthCheck);
 
