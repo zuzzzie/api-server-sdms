@@ -17,7 +17,6 @@
 #define ECHO_PIN        13
 
 // ─── APN Settings ──────────────────────────
-// Change apn[] to match your SIM carrier:
 //   Airtel India : "airtelgprs.com"
 //   Jio          : "jionet"
 //   BSNL         : "bsnlnet"
@@ -33,8 +32,8 @@ const char pass[] = "";
 const char* SERVER    = "api-server-sdms-production.up.railway.app";
 const int   PORT      = 80;
 const char* ENDPOINT  = "/data";
-const char* DEVICE_ID = "bin-01";   // Must match a dustbins.device_id in Supabase
-const float FULL_CM   = 10.0;       // Distance threshold for "bin full" (cm)
+const char* DEVICE_ID = "bin-01";
+const float FULL_CM   = 10.0;
 
 // ─── Fixed GPS Coordinates ─────────────────
 // Replace with your bin's actual GPS position.
@@ -87,26 +86,26 @@ void setup() {
   // ─── Network ───────────────────────────
   Serial.println("\n--- Waiting for Network ---");
   if (!modem.waitForNetwork()) {
-    Serial.println("❌ Network failed! Restarting...");
+    Serial.println("Network failed! Restarting...");
     delay(3000);
     ESP.restart();
   }
-  Serial.println("✅ Network OK!");
+  Serial.println("Network OK!");
 
   // ─── Signal Quality ────────────────────
   int signal = modem.getSignalQuality();
-  Serial.print("✅ Signal Quality: ");
+  Serial.print("Signal Quality: ");
   Serial.println(signal);
 
   // ─── GPRS ──────────────────────────────
   Serial.println("\n--- Connecting GPRS ---");
   if (!modem.gprsConnect(apn, user, pass)) {
-    Serial.println("❌ GPRS Failed! Restarting...");
+    Serial.println("GPRS Failed! Restarting...");
     delay(3000);
     ESP.restart();
   }
-  Serial.println("✅ GPRS Connected!");
-  Serial.print("✅ IP Address: ");
+  Serial.println("GPRS Connected!");
+  Serial.print("IP Address: ");
   Serial.println(modem.localIP());
 
   // ─── Server Reachability Check ─────────
@@ -114,10 +113,10 @@ void setup() {
   Serial.println("\n--- Checking Railway Server ---");
   TinyGsmClient testClient(modem);
   if (testClient.connect(SERVER, PORT)) {
-    Serial.println("✅ Railway server reachable!");
+    Serial.println("Railway server reachable!");
     testClient.stop();
   } else {
-    Serial.println("⚠️  Server not reachable yet — continuing anyway");
+    Serial.println("Server not reachable yet — continuing anyway");
   }
 
   Serial.println("\n================================");
@@ -144,12 +143,12 @@ void sendData(float dist, bool full) {
 
   // ─── GPRS Reconnect if Dropped ─────────
   if (!modem.isGprsConnected()) {
-    Serial.println("⚠️  GPRS dropped! Reconnecting...");
+    Serial.println("GPRS dropped! Reconnecting...");
     if (!modem.gprsConnect(apn, user, pass)) {
-      Serial.println("❌ GPRS reconnect failed — skipping this reading");
+      Serial.println("GPRS reconnect failed — skipping this reading");
       return;
     }
-    Serial.println("✅ GPRS reconnected!");
+    Serial.println("GPRS reconnected!");
     delay(2000);
   }
 
@@ -166,8 +165,8 @@ void sendData(float dist, bool full) {
   payload += "\"device_ts\":"   + String(millis());
   payload += "}";
 
-  Serial.println("📦 Payload  : " + payload);
-  Serial.println("📡 Sending to Railway...");
+  Serial.println("Payload  : " + payload);
+  Serial.println("Sending to Railway...");
 
   // ─── Fresh Client Every Send ───────────
   // Re-creating the client each cycle avoids stale-socket status -3 errors.
@@ -182,7 +181,7 @@ void sendData(float dist, bool full) {
   int err = http.post(ENDPOINT, "application/json", payload);
 
   if (err != 0) {
-    Serial.println("❌ HTTP error: " + String(err) + " — will retry next cycle");
+    Serial.println("HTTP error: " + String(err) + " — will retry next cycle");
     http.stop();
     return;
   }
@@ -193,18 +192,18 @@ void sendData(float dist, bool full) {
 
   // ─── Response Handling ────────────────
   if (status == 200) {
-    Serial.println("✅ Saved to Supabase via Railway!");
+    Serial.println("Saved to Supabase via Railway!");
   } else if (status == 301 || status == 302) {
     // Railway redirected HTTP → HTTPS. This means it did not accept plain
     // HTTP on this path. Contact support or use TinyGsmClientSecure instead.
-    Serial.println("⚠️  Redirect (3xx) — server may require HTTPS. Status: " + String(status));
+    Serial.println("Redirect (3xx) — server may require HTTPS. Status: " + String(status));
   } else if (status == 400) {
-    Serial.println("❌ Bad request (400) — check payload fields match server schema");
+    Serial.println("Bad request (400) — check payload fields match server schema");
     Serial.println("   Response: " + resp);
   } else if (status == 429) {
-    Serial.println("⚠️  Rate limited (429) — sending too fast, increase delay");
+    Serial.println("Rate limited (429) — sending too fast, increase delay");
   } else {
-    Serial.println("❌ Unexpected status: " + String(status));
+    Serial.println("Unexpected status: " + String(status));
     Serial.println("   Response: " + resp);
   }
 }
@@ -212,7 +211,7 @@ void sendData(float dist, bool full) {
 // ───────────────────────────────────────────
 void loop() {
   if (!modemReady) {
-    Serial.println("❌ Modem not ready! Restarting...");
+    Serial.println("Modem not ready! Restarting...");
     delay(3000);
     ESP.restart();
   }
@@ -223,7 +222,7 @@ void loop() {
   float dist = getDistance();
 
   if (dist < 0) {
-    Serial.println("⚠️  Sensor error — skipping this reading");
+    Serial.println("Sensor error — skipping this reading");
     delay(2000);
     return;
   }
@@ -231,14 +230,14 @@ void loop() {
   bool full = (dist < FULL_CM);
 
   // ─── Print Readings ────────────────────
-  Serial.print("📏 Distance : ");
+  Serial.print("Distance : ");
   Serial.print(dist);
   Serial.println(" cm");
 
-  Serial.print("🗑️  Bin Full : ");
-  Serial.println(full ? "YES 🔴" : "NO  🟢");
+  Serial.print("Bin Full : ");
+  Serial.println(full ? "YES" : "NO");
 
-  Serial.print("📍 Location : ");
+  Serial.print("Location : ");
   Serial.print(FIXED_LAT, 6);
   Serial.print(", ");
   Serial.println(FIXED_LNG, 6);
@@ -249,7 +248,7 @@ void loop() {
   // 60-second interval — server rate limit is 20 req/min per IP.
   // With multiple bins sharing one GSM NAT IP, 60 s keeps them well
   // within the 20 req/min budget (1 req/min per bin).
-  Serial.println("⏳ Next reading in 60 seconds...");
+  Serial.println("reading in 60 seconds...");
   Serial.println("─────────────────────────────────\n");
   delay(60000);
 }
