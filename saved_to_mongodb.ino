@@ -17,18 +17,27 @@
 #define ECHO_PIN        13
 
 // ─── APN Settings ──────────────────────────
+// Change apn[] to match your SIM carrier:
+//   Airtel India : "airtelgprs.com"
+//   Jio          : "jionet"
+//   BSNL         : "bsnlnet"
+//   Vi/Idea      : "internet"
 const char apn[]  = "airtelgprs.com";
 const char user[] = "";
 const char pass[] = "";
 
-// ─── AWS EC2 Settings ──────────────────────
-const char* SERVER    = "13.202.7.165";
+// ─── Railway API Settings ──────────────────
+// Plain HTTP on port 80 — Railway edge accepts HTTP and forwards it
+// internally to the Node.js container.  No HTTPS needed on the device.
+// POST /data requires NO API key — the server uses rate-limiting instead.
+const char* SERVER    = "api-server-sdms-production.up.railway.app";
 const int   PORT      = 80;
 const char* ENDPOINT  = "/data";
-const char* DEVICE_ID = "bin-01";
-const float FULL_CM   = 10.0;
+const char* DEVICE_ID = "bin-01";   // Must match a dustbins.device_id in Supabase
+const float FULL_CM   = 10.0;       // Distance threshold for "bin full" (cm)
 
 // ─── Fixed GPS Coordinates ─────────────────
+// Replace with your bin's actual GPS position.
 const float FIXED_LAT = 23.892550;
 const float FIXED_LNG = 89.595650;
 
@@ -48,7 +57,7 @@ void setup() {
   pinMode(ECHO_PIN, INPUT);
 
   Serial.println("================================");
-  Serial.println("   Smart Bin → AWS EC2 Cloud    ");
+  Serial.println("  Smart Bin → Railway + Supabase");
   Serial.println("================================");
   Serial.println("Initializing GSM...");
 
@@ -100,14 +109,15 @@ void setup() {
   Serial.print("✅ IP Address: ");
   Serial.println(modem.localIP());
 
-  // ─── EC2 Reachability Check ────────────
-  Serial.println("\n--- Checking EC2 Server ---");
+  // ─── Server Reachability Check ─────────
+  // Uses a plain TCP connect — confirms the server IP is routable.
+  Serial.println("\n--- Checking Railway Server ---");
   TinyGsmClient testClient(modem);
   if (testClient.connect(SERVER, PORT)) {
-    Serial.println("✅ EC2 server reachable!");
+    Serial.println("✅ Railway server reachable!");
     testClient.stop();
   } else {
-    Serial.println("⚠️  EC2 not reachable yet — continuing anyway");
+    Serial.println("⚠️  Server not reachable yet — continuing anyway");
   }
 
   Serial.println("\n================================");
@@ -130,7 +140,7 @@ float getDistance() {
 }
 
 // ───────────────────────────────────────────
-void sendToAWS(float dist, bool full) {
+void sendData(float dist, bool full) {
 
   // ─── GPRS Reconnect if Dropped ─────────
   if (!modem.isGprsConnected()) {
@@ -144,29 +154,35 @@ void sendToAWS(float dist, bool full) {
   }
 
   // ─── Build JSON Payload ────────────────
+  // Fields match exactly what POST /data expects on the Railway server.
+  // The server validates each field and writes to Supabase bin_locations.
+  // fill_level (0-100%) is computed server-side from distance.
   String payload = "{";
   payload += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
   payload += "\"lat\":"         + String(FIXED_LAT, 6) + ",";
   payload += "\"lng\":"         + String(FIXED_LNG, 6) + ",";
   payload += "\"distance\":"    + String(dist, 2)      + ",";
-  payload += "\"bin_full\":"    + String(full ? "true" : "false") + ",";
+  payload += "\"bin_full\":"    + (full ? "true" : "false") + ",";
   payload += "\"device_ts\":"   + String(millis());
   payload += "}";
 
   Serial.println("📦 Payload  : " + payload);
-  Serial.println("📡 Sending to AWS EC2...");
+  Serial.println("📡 Sending to Railway...");
 
   // ─── Fresh Client Every Send ───────────
-  // (Fixes status -3 / stale connection bug)
+  // Re-creating the client each cycle avoids stale-socket status -3 errors.
+  // Plain TinyGsmClient = HTTP (no TLS). Railway edge accepts plain HTTP
+  // on port 80 and routes it to the Node.js container internally.
   TinyGsmClient freshClient(modem);
   HttpClient    http(freshClient, SERVER, PORT);
-  http.setTimeout(10000);  // 10 second timeout
+  http.setTimeout(15000);  // 15 s — GSM latency is high
 
-  // ─── Single POST — No Retry Loop ───────
+  // ArduinoHttpClient automatically adds the correct Host: header,
+  // which is required for Railway's SNI-based routing on shared IPs.
   int err = http.post(ENDPOINT, "application/json", payload);
 
   if (err != 0) {
-    Serial.println("❌ Connection error: " + String(err) + " — will retry next cycle");
+    Serial.println("❌ HTTP error: " + String(err) + " — will retry next cycle");
     http.stop();
     return;
   }
@@ -175,12 +191,21 @@ void sendToAWS(float dist, bool full) {
   String resp   = http.responseBody();
   http.stop();
 
-  // ─── Result ────────────────────────────
+  // ─── Response Handling ────────────────
   if (status == 200) {
-    Serial.println("✅ Saved to MongoDB successfully!");
+    Serial.println("✅ Saved to Supabase via Railway!");
+  } else if (status == 301 || status == 302) {
+    // Railway redirected HTTP → HTTPS. This means it did not accept plain
+    // HTTP on this path. Contact support or use TinyGsmClientSecure instead.
+    Serial.println("⚠️  Redirect (3xx) — server may require HTTPS. Status: " + String(status));
+  } else if (status == 400) {
+    Serial.println("❌ Bad request (400) — check payload fields match server schema");
+    Serial.println("   Response: " + resp);
+  } else if (status == 429) {
+    Serial.println("⚠️  Rate limited (429) — sending too fast, increase delay");
   } else {
-    Serial.println("❌ Server returned status: " + String(status));
-    Serial.println("   Response : " + resp);
+    Serial.println("❌ Unexpected status: " + String(status));
+    Serial.println("   Response: " + resp);
   }
 }
 
@@ -218,10 +243,13 @@ void loop() {
   Serial.print(", ");
   Serial.println(FIXED_LNG, 6);
 
-  // ─── Send Once to AWS ──────────────────
-  sendToAWS(dist, full);
+  // ─── Send to Railway → Supabase ────────
+  sendData(dist, full);
 
-  Serial.println("⏳ Next reading in 5 seconds...");
+  // 60-second interval — server rate limit is 20 req/min per IP.
+  // With multiple bins sharing one GSM NAT IP, 60 s keeps them well
+  // within the 20 req/min budget (1 req/min per bin).
+  Serial.println("⏳ Next reading in 60 seconds...");
   Serial.println("─────────────────────────────────\n");
-  delay(5000);
+  delay(60000);
 }
