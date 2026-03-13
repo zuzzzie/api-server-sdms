@@ -1,5 +1,6 @@
 #define TINY_GSM_MODEM_SIM800
 #define TINY_GSM_RX_BUFFER 1024
+#define TINY_GSM_SSL_ALWAYS_VERIFY_PEER 0  // skip cert check — device has no CA store
 
 #include <TinyGsmClient.h>
 #include <ArduinoHttpClient.h>
@@ -25,13 +26,13 @@ const char apn[]  = "airtelgprs.com";
 const char user[] = "";
 const char pass[] = "";
 
-// ─── Railway API Settings ──────────────────
-// Plain HTTP on port 80 — Railway edge accepts HTTP and forwards it
-// internally to the Node.js container.  No HTTPS needed on the device.
-// POST /data requires NO API key — the server uses rate-limiting instead.
-const char* SERVER    = "api-server-sdms-production.up.railway.app";
+// ─── Cloudflare Worker Relay ───────────────
+// SIM800L firmware only supports TLS 1.0; Railway requires TLS 1.2+.
+// Fix: device sends plain HTTP to the Cloudflare Worker (free, 100k req/day).
+// Worker receives on port 80 (no TLS) and forwards to Railway over HTTPS.
+const char* SERVER    = "smartbin.bparyaan.workers.dev";
 const int   PORT      = 80;
-const char* ENDPOINT  = "/data";
+const char* ENDPOINT  = "/";
 const char* DEVICE_ID = "bin-01";
 const float FULL_CM   = 10.0;
 
@@ -109,14 +110,14 @@ void setup() {
   Serial.println(modem.localIP());
 
   // ─── Server Reachability Check ─────────
-  // Uses a plain TCP connect — confirms the server IP is routable.
-  Serial.println("\n--- Checking Railway Server ---");
+  // Plain TCP connect to port 80 — confirms Cloudflare Worker is routable.
+  Serial.println("\n--- Checking Cloudflare Worker ---");
   TinyGsmClient testClient(modem);
   if (testClient.connect(SERVER, PORT)) {
-    Serial.println("Railway server reachable!");
+    Serial.println("Cloudflare Worker reachable!");
     testClient.stop();
   } else {
-    Serial.println("Server not reachable yet — continuing anyway");
+    Serial.println("Worker not reachable yet — continuing anyway");
   }
 
   Serial.println("\n================================");
@@ -170,8 +171,8 @@ void sendData(float dist, bool full) {
 
   // ─── Fresh Client Every Send ───────────
   // Re-creating the client each cycle avoids stale-socket status -3 errors.
-  // Plain TinyGsmClient = HTTP (no TLS). Railway edge accepts plain HTTP
-  // on port 80 and routes it to the Node.js container internally.
+  // Plain TinyGsmClient — device talks HTTP to the Cloudflare Worker on port 80.
+  // Cloudflare handles the HTTPS leg to Railway; no TLS on the device side.
   TinyGsmClient freshClient(modem);
   HttpClient    http(freshClient, SERVER, PORT);
   http.setTimeout(15000);  // 15 s — GSM latency is high
@@ -192,11 +193,11 @@ void sendData(float dist, bool full) {
 
   // ─── Response Handling ────────────────
   if (status == 200) {
-    Serial.println("Saved to Supabase via Railway!");
+    Serial.println("Saved to Supabase! (Worker -> Railway -> Supabase)");
   } else if (status == 301 || status == 302) {
-    // Railway redirected HTTP → HTTPS. This means it did not accept plain
-    // HTTP on this path. Contact support or use TinyGsmClientSecure instead.
-    Serial.println("Redirect (3xx) — server may require HTTPS. Status: " + String(status));
+    // Should not happen now that we use port 443 directly.
+    // If this still appears, double-check SERVER and PORT constants.
+    Serial.println("Unexpected redirect (" + String(status) + ") — check SERVER/PORT constants");
   } else if (status == 400) {
     Serial.println("Bad request (400) — check payload fields match server schema");
     Serial.println("   Response: " + resp);
