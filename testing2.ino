@@ -1,6 +1,6 @@
 #define TINY_GSM_MODEM_SIM800
 #define TINY_GSM_RX_BUFFER 1024
-#define TINY_GSM_SSL_ALWAYS_VERIFY_PEER 0  // skip cert check — device has no CA store
+#define TINY_GSM_SSL_ALWAYS_VERIFY_PEER 0
 
 #include <TinyGsmClient.h>
 #include <ArduinoHttpClient.h>
@@ -20,24 +20,18 @@
 // ─── APN Settings ──────────────────────────
 //   Airtel India : "airtelgprs.com"
 //   Jio          : "jionet"
-//   BSNL         : "bsnlnet"
-//   Vi/Idea      : "internet"
 const char apn[]  = "airtelgprs.com";
 const char user[] = "";
 const char pass[] = "";
 
 // ─── Cloudflare Worker Relay ───────────────
-// SIM800L firmware only supports TLS 1.0; Railway requires TLS 1.2+.
-// Fix: device sends plain HTTP to the Cloudflare Worker (free, 100k req/day).
-// Worker receives on port 80 (no TLS) and forwards to Railway over HTTPS.
 const char* SERVER    = "smartbin.bparyaan.workers.dev";
-const int   PORT      = 80;
+const int   PORT      = 443;
 const char* ENDPOINT  = "/";
 const char* DEVICE_ID = "bin-01";
 const float FULL_CM   = 10.0;
 
 // ─── Fixed GPS Coordinates ─────────────────
-// Replace with your bin's actual GPS position.
 const float FIXED_LAT = 23.892550;
 const float FIXED_LNG = 89.595650;
 
@@ -108,12 +102,11 @@ void setup() {
   Serial.println("GPRS Connected!");
   Serial.print("IP Address: ");
   Serial.println(modem.localIP());
-  delay(3000);  // let the PDP context fully settle before any TCP attempt
+  delay(3000);
 
   // ─── Server Reachability Check ─────────
-  // Plain TCP connect to port 80 — confirms Cloudflare Worker is routable.
   Serial.println("\n--- Checking Cloudflare Worker ---");
-  TinyGsmClient testClient(modem);
+  TinyGsmClientSecure testClient(modem);
   if (testClient.connect(SERVER, PORT)) {
     Serial.println("Cloudflare Worker reachable!");
     testClient.stop();
@@ -144,9 +137,6 @@ float getDistance() {
 void sendData(float dist, bool full) {
 
   // ─── Force Fresh GPRS Every Send ──────
-  // SIM800L reuses its single TCP channel; after a 60-s sleep the socket
-  // goes stale (error -3 / timeout). Full disconnect + reconnect each cycle
-  // guarantees a clean channel with no leftover state.
   modem.gprsDisconnect();
   delay(1000);
   if (!modem.gprsConnect(apn, user, pass)) {
@@ -154,7 +144,7 @@ void sendData(float dist, bool full) {
     return;
   }
   Serial.println("GPRS ready!");
-  delay(3000);  // settle time — critical for SIM800L TCP reliability
+  delay(3000);
 
   // ─── Build JSON Payload ────────────────
   String payload = "{";
@@ -170,12 +160,9 @@ void sendData(float dist, bool full) {
   Serial.println("Sending to Railway...");
 
   // ─── Fresh Client Every Send ───────────
-  // Re-creating the client each cycle avoids stale-socket status -3 errors.
-  // Plain TinyGsmClient — device talks HTTP to the Cloudflare Worker on port 80.
-  // Cloudflare handles the HTTPS leg to Railway; no TLS on the device side.
-  TinyGsmClient freshClient(modem);
+  TinyGsmClientSecure freshClient(modem);
   HttpClient    http(freshClient, SERVER, PORT);
-  http.setTimeout(30000);  // 30 s — GSM RTT + Cloudflare→Railway can be slow
+  http.setTimeout(30000);
 
   int err = http.post(ENDPOINT, "application/json", payload);
 
@@ -193,8 +180,6 @@ void sendData(float dist, bool full) {
   if (status == 200) {
     Serial.println("Saved to Supabase! (Worker -> Railway -> Supabase)");
   } else if (status == 301 || status == 302) {
-    // Should not happen now that we use port 443 directly.
-    // If this still appears, double-check SERVER and PORT constants.
     Serial.println("Unexpected redirect (" + String(status) + ") — check SERVER/PORT constants");
   } else if (status == 400) {
     Serial.println("Bad request (400) — check payload fields match server schema");
