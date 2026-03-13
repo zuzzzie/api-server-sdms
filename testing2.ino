@@ -108,6 +108,7 @@ void setup() {
   Serial.println("GPRS Connected!");
   Serial.print("IP Address: ");
   Serial.println(modem.localIP());
+  delay(3000);  // let the PDP context fully settle before any TCP attempt
 
   // ─── Server Reachability Check ─────────
   // Plain TCP connect to port 80 — confirms Cloudflare Worker is routable.
@@ -142,16 +143,18 @@ float getDistance() {
 // ───────────────────────────────────────────
 void sendData(float dist, bool full) {
 
-  // ─── GPRS Reconnect if Dropped ─────────
-  if (!modem.isGprsConnected()) {
-    Serial.println("GPRS dropped! Reconnecting...");
-    if (!modem.gprsConnect(apn, user, pass)) {
-      Serial.println("GPRS reconnect failed — skipping this reading");
-      return;
-    }
-    Serial.println("GPRS reconnected!");
-    delay(2000);
+  // ─── Force Fresh GPRS Every Send ──────
+  // SIM800L reuses its single TCP channel; after a 60-s sleep the socket
+  // goes stale (error -3 / timeout). Full disconnect + reconnect each cycle
+  // guarantees a clean channel with no leftover state.
+  modem.gprsDisconnect();
+  delay(1000);
+  if (!modem.gprsConnect(apn, user, pass)) {
+    Serial.println("GPRS reconnect failed — skipping this reading");
+    return;
   }
+  Serial.println("GPRS ready!");
+  delay(3000);  // settle time — critical for SIM800L TCP reliability
 
   // ─── Build JSON Payload ────────────────
   String payload = "{";
@@ -172,7 +175,7 @@ void sendData(float dist, bool full) {
   // Cloudflare handles the HTTPS leg to Railway; no TLS on the device side.
   TinyGsmClient freshClient(modem);
   HttpClient    http(freshClient, SERVER, PORT);
-  http.setTimeout(15000);
+  http.setTimeout(30000);  // 30 s — GSM RTT + Cloudflare→Railway can be slow
 
   int err = http.post(ENDPOINT, "application/json", payload);
 
