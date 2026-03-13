@@ -154,9 +154,6 @@ void sendData(float dist, bool full) {
   }
 
   // ─── Build JSON Payload ────────────────
-  // Fields match exactly what POST /data expects on the Railway server.
-  // The server validates each field and writes to Supabase bin_locations.
-  // fill_level (0-100%) is computed server-side from distance.
   String payload = "{";
   payload += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
   payload += "\"lat\":"         + String(FIXED_LAT, 6) + ",";
@@ -175,10 +172,8 @@ void sendData(float dist, bool full) {
   // Cloudflare handles the HTTPS leg to Railway; no TLS on the device side.
   TinyGsmClient freshClient(modem);
   HttpClient    http(freshClient, SERVER, PORT);
-  http.setTimeout(15000);  // 15 s — GSM latency is high
+  http.setTimeout(15000);
 
-  // ArduinoHttpClient automatically adds the correct Host: header,
-  // which is required for Railway's SNI-based routing on shared IPs.
   int err = http.post(ENDPOINT, "application/json", payload);
 
   if (err != 0) {
